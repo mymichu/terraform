@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/apparentlymart/go-versions/versions"
 	version "github.com/hashicorp/go-version"
@@ -55,6 +57,23 @@ func NewModuleInstaller(modsDir string, loader *configload.Loader, reg *registry
 		reg:                     reg,
 		registryPackageVersions: make(map[addrs.ModuleRegistryPackage]*response.ModuleVersions),
 		registryPackageSources:  make(map[moduleVersion]addrs.ModuleSourceRemote),
+	}
+}
+
+// mdTODO: remove this later, only for iteration while the api hasn't been updated.
+func injectMockDeprecations(modules *response.ModuleVersions) {
+	//jsonBytes, _ := json.MarshalIndent(modules, "", "  ")
+	//log.Printf("[DEBUG] submodule!!!: %s ", string(jsonBytes))
+	//log.Printf("[DEBUG] __________________________________________________")
+	for _, module := range modules.Modules {
+		for _, version := range module.Versions {
+			// Inject a mock deprecation into each version
+			version.Deprecation = response.Deprecation{
+				Deprecated:   true,
+				Message:      "Mock deprecation message for: ",
+				ExternalLink: "https://example.com/mock-deprecation",
+			}
+		}
 	}
 }
 
@@ -253,6 +272,26 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 					}
 
 					log.Printf("[TRACE] ModuleInstaller: Module installer: %s %s already installed in %s", key, record.Version, record.Dir)
+
+					// Checking for module deprecations in the case no new module versions need installation
+					if addr, isRegistryModule := req.SourceAddr.(addrs.ModuleSourceRegistry); isRegistryModule {
+						regClient := i.reg
+
+						regsrcAddr := regsrc.ModuleFromRegistryPackageAddr(addr.Package)
+						resp, err := regClient.ModuleVersions(ctx, regsrcAddr)
+
+						// mdTODO: remove this later on
+						injectMockDeprecations(resp)
+
+						if err != nil {
+							log.Printf("[DEBUG] Deprecation for %s could not be checked: call to registry failed", addr.Package.Namespace)
+
+						} else {
+							modDeprecations := collectModuleDeprecationWarnings(resp.Modules, record.Version, req.CallRange.Ptr())
+							diags = diags.Extend(modDeprecations)
+						}
+					}
+
 					return mod, record.Version, diags
 				}
 			}
@@ -434,6 +473,8 @@ func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *config
 		var err error
 		log.Printf("[DEBUG] %s listing available versions of %s at %s", key, addr, hostname)
 		resp, err = reg.ModuleVersions(ctx, regsrcAddr)
+		// mdTODO: remove this
+		injectMockDeprecations(resp)
 		if err != nil {
 			if registry.IsModuleNotFound(err) {
 				diags = diags.Append(&hcl.Diagnostic{
@@ -569,6 +610,9 @@ func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *config
 		})
 		return nil, nil, diags
 	}
+
+	modDeprecations := collectModuleDeprecationWarnings(resp.Modules, latestMatch, req.CallRange.Ptr())
+	diags = diags.Extend(modDeprecations)
 
 	// Report up to the caller that we're about to start downloading.
 	hooks.Download(key, packageAddr.String(), latestMatch)
@@ -919,6 +963,37 @@ func maybeImproveLocalInstallError(req *configs.ModuleRequest, diags hcl.Diagnos
 	// If we get down here then we have nothing useful to do, so we'll just
 	// echo back what we were given.
 	return diags
+}
+
+// mdTODO: not actually needed, just used to Separate out warnings where the source is the same
+func randomString(length int, charset string) string {
+	var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[seededRand.Intn(len(charset))]
+	}
+	return string(b)
+}
+
+func collectModuleDeprecationWarnings(moduleVersions []*response.ModuleProviderVersions, targetVersion *version.Version, subject *hcl.Range) hcl.Diagnostics {
+	var moduleDeprecationDiags hcl.Diagnostics
+	for _, module := range moduleVersions {
+		for _, moduleVersion := range module.Versions {
+			v, _ := version.NewVersion(moduleVersion.Version)
+			if targetVersion.Equal(v) {
+				if moduleVersion.Deprecation.Deprecated {
+					moduleDeprecationDiags = moduleDeprecationDiags.Append(&hcl.Diagnostic{
+						Severity: hcl.DiagWarning,
+						Summary:  moduleVersion.Deprecation.Message + module.Source + randomString(10, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), // mdTODO: fix this up when mocking is not needed
+						Detail:   moduleVersion.Deprecation.ExternalLink,
+						Subject:  subject,
+					})
+				}
+				return moduleDeprecationDiags
+			}
+		}
+	}
+	return moduleDeprecationDiags
 }
 
 func splitAddrSubdir(addr addrs.ModuleSource) (string, string) {
