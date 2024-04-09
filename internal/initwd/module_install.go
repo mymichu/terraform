@@ -65,6 +65,10 @@ func injectMockDeprecations(modules *response.ModuleVersions) {
 	//jsonBytes, _ := json.MarshalIndent(modules, "", "  ")
 	//log.Printf("[DEBUG] submodule!!!: %s ", string(jsonBytes))
 	//log.Printf("[DEBUG] __________________________________________________")
+	if modules == nil || modules.Modules == nil {
+		log.Println("modules or modules.Modules is nil")
+		return // Exit the function to avoid the panic
+	}
 	for _, module := range modules.Modules {
 		for _, version := range module.Versions {
 			// Inject a mock deprecation into each version
