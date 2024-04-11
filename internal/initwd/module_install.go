@@ -526,8 +526,11 @@ func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *config
 
 	var latestMatch *version.Version
 	var latestVersion *version.Version
+	moduleVersionsMap := make(map[string]*response.ModuleVersion)
 	for _, mv := range modMeta.Versions {
 		v, err := version.NewVersion(mv.Version)
+		moduleVersionsMap[mv.Version] = mv
+		log.Printf("[INFO]module in loop: %s, version in loop: %s", mv.Root.Path, mv.Version)
 		if err != nil {
 			// Should never happen if the registry server is compliant with
 			// the protocol, but we'll warn if not to assist someone who
@@ -615,8 +618,10 @@ func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *config
 		return nil, nil, diags
 	}
 
-	modDeprecations := collectModuleDeprecationWarnings(resp.Modules, latestMatch, req.CallRange.Ptr())
-	diags = diags.Extend(modDeprecations)
+	modDeprecations := collectModuleDeprecationWarnings(moduleVersionsMap[latestMatch.Original()], req.CallRange.Ptr())
+	if modDeprecations != nil {
+		diags = diags.Append(modDeprecations)
+	}
 
 	// Report up to the caller that we're about to start downloading.
 	hooks.Download(key, packageAddr.String(), latestMatch)
@@ -979,22 +984,14 @@ func randomString(length int, charset string) string {
 	return string(b)
 }
 
-func collectModuleDeprecationWarnings(moduleVersions []*response.ModuleProviderVersions, targetVersion *version.Version, subject *hcl.Range) hcl.Diagnostics {
-	var moduleDeprecationDiags hcl.Diagnostics
-	for _, module := range moduleVersions {
-		for _, moduleVersion := range module.Versions {
-			v, _ := version.NewVersion(moduleVersion.Version)
-			if targetVersion.Equal(v) {
-				if moduleVersion.Deprecation.Deprecated {
-					moduleDeprecationDiags = moduleDeprecationDiags.Append(&hcl.Diagnostic{
-						Severity: hcl.DiagWarning,
-						Summary:  moduleVersion.Deprecation.Message + module.Source + randomString(10, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), // mdTODO: fix this up when mocking is not needed
-						Detail:   moduleVersion.Deprecation.ExternalLink,
-						Subject:  subject,
-					})
-				}
-				return moduleDeprecationDiags
-			}
+func collectModuleDeprecationWarnings(moduleVersion *response.ModuleVersion, subject *hcl.Range) *hcl.Diagnostic {
+	var moduleDeprecationDiags *hcl.Diagnostic
+	if moduleVersion.Deprecation.Deprecated {
+		moduleDeprecationDiags = &hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  moduleVersion.Deprecation.Message + moduleVersion.Root.Path + randomString(10, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), // mdTODO: fix this up when mocking is not needed
+			Detail:   moduleVersion.Deprecation.ExternalLink,
+			Subject:  subject,
 		}
 	}
 	return moduleDeprecationDiags
