@@ -5,6 +5,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
@@ -233,7 +234,9 @@ func (c *InitCommand) Run(args []string) int {
 		state = sMgr.State()
 	}
 
+	// markdecrane : this is where we start for the module installation and/or checks for proper installation
 	if flagGet {
+		// mdTODO: need to return module deprecations here and then build the final consolidated warning
 		modsOutput, modsAbort, modsDiags := c.getModules(ctx, path, testsDirectory, rootModEarly, flagUpgrade)
 		diags = diags.Append(modsDiags)
 		if modsAbort || modsDiags.HasErrors() {
@@ -344,6 +347,7 @@ func (c *InitCommand) Run(args []string) int {
 	return 0
 }
 
+// markdecrane: I suppose that c.installModules will cover ALL the modules
 func (c *InitCommand) getModules(ctx context.Context, path, testsDir string, earlyRoot *configs.Module, upgrade bool) (output bool, abort bool, diags tfdiags.Diagnostics) {
 	testModules := false // We can also have modules buried in test files.
 	for _, file := range earlyRoot.Tests {
@@ -375,7 +379,9 @@ func (c *InitCommand) getModules(ctx context.Context, path, testsDir string, ear
 		ShowLocalPaths: true,
 	}
 
-	installAbort, installDiags := c.installModules(ctx, path, testsDir, upgrade, false, hooks)
+	installAbort, installDiags, moduleDeprecations := c.installModules(ctx, path, testsDir, upgrade, false, hooks)
+	jsonBytes, _ := json.MarshalIndent(moduleDeprecations, "", "  ")
+	log.Printf("[INFO] module deprecation: %s", string(jsonBytes))
 	diags = diags.Append(installDiags)
 
 	// At this point, installModules may have generated error diags or been
