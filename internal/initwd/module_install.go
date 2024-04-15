@@ -113,7 +113,7 @@ func injectMockDeprecations(modules *response.ModuleVersions) {
 // If successful (the returned diagnostics contains no errors) then the
 // first return value is the early configuration tree that was constructed by
 // the installation process.
-func (i *ModuleInstaller) InstallModules(ctx context.Context, rootDir, testsDir string, upgrade, installErrsOnly bool, hooks ModuleInstallHooks) (*configs.Config, tfdiags.Diagnostics, []*configs.RegistryModuleDeprecation) {
+func (i *ModuleInstaller) InstallModules(ctx context.Context, rootDir, testsDir string, upgrade, installErrsOnly bool, hooks ModuleInstallHooks) (*configs.Config, tfdiags.Diagnostics, []*configs.ModuleDeprecationInfo) {
 	log.Printf("[TRACE] ModuleInstaller: installing child modules for %s into %s", rootDir, i.modsDir)
 	var diags tfdiags.Diagnostics
 
@@ -165,7 +165,7 @@ func (i *ModuleInstaller) InstallModules(ctx context.Context, rootDir, testsDir 
 
 func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest modsdir.Manifest, upgrade bool, hooks ModuleInstallHooks, fetcher *getmodules.PackageFetcher) configs.ModuleWalker {
 	return configs.ModuleWalkerFunc(
-		func(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.RegistryModuleDeprecation) {
+		func(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
 			var diags hcl.Diagnostics
 
 			if req.SourceAddr == nil {
@@ -275,7 +275,7 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 
 					log.Printf("[TRACE] ModuleInstaller: Module installer: %s %s already installed in %s", key, record.Version, record.Dir)
 
-					var modDeprecation *configs.RegistryModuleDeprecation
+					var modDeprecation *configs.ModuleDeprecationInfo
 
 					// Checking for module deprecations in the case no new module versions need installation
 					if addr, isRegistryModule := req.SourceAddr.(addrs.ModuleSourceRegistry); isRegistryModule {
@@ -337,7 +337,7 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 	)
 }
 
-func (i *ModuleInstaller) installDescendentModules(rootMod *configs.Module, manifest modsdir.Manifest, installWalker configs.ModuleWalker, installErrsOnly bool) (*configs.Config, tfdiags.Diagnostics, []*configs.RegistryModuleDeprecation) {
+func (i *ModuleInstaller) installDescendentModules(rootMod *configs.Module, manifest modsdir.Manifest, installWalker configs.ModuleWalker, installErrsOnly bool) (*configs.Config, tfdiags.Diagnostics, []*configs.ModuleDeprecationInfo) {
 	var diags tfdiags.Diagnostics
 
 	// When attempting to initialize the current directory with a module
@@ -351,7 +351,7 @@ func (i *ModuleInstaller) installDescendentModules(rootMod *configs.Module, mani
 	walker := installWalker
 	if installErrsOnly {
 		// mdTODO: don't think mod deprecations are relevant here, see about return value here and any implications it has
-		walker = configs.ModuleWalkerFunc(func(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.RegistryModuleDeprecation) {
+		walker = configs.ModuleWalkerFunc(func(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
 			mod, version, diags, _ := installWalker.LoadModule(req)
 			instDiags = instDiags.Extend(diags)
 			return mod, version, diags, nil
@@ -457,7 +457,7 @@ func (i *ModuleInstaller) installLocalModule(req *configs.ModuleRequest, key str
 	return mod, diags
 }
 
-func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *configs.ModuleRequest, key string, instPath string, addr addrs.ModuleSourceRegistry, manifest modsdir.Manifest, hooks ModuleInstallHooks, fetcher *getmodules.PackageFetcher) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.RegistryModuleDeprecation) {
+func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *configs.ModuleRequest, key string, instPath string, addr addrs.ModuleSourceRegistry, manifest modsdir.Manifest, hooks ModuleInstallHooks, fetcher *getmodules.PackageFetcher) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
 	var diags hcl.Diagnostics
 
 	hostname := addr.Package.Host
@@ -621,7 +621,7 @@ func (i *ModuleInstaller) installRegistryModule(ctx context.Context, req *config
 		return nil, nil, diags, nil
 	}
 
-	modDeprecation := collectModuleDeprecationWarnings(moduleVersionsMap[latestMatch.Original()], req.CallRange.Ptr())
+	modDeprecation := collectModuleDeprecationWarnings(moduleVersionsMap[latestMatch.Original()], req.CallRange.Ptr(), req.Name)
 
 	// Report up to the caller that we're about to start downloading.
 	hooks.Download(key, packageAddr.String(), latestMatch)
@@ -974,16 +974,21 @@ func maybeImproveLocalInstallError(req *configs.ModuleRequest, diags hcl.Diagnos
 	return diags
 }
 
-func collectModuleDeprecationWarnings(moduleVersion *response.ModuleVersion, subject *hcl.Range) *configs.RegistryModuleDeprecation {
-	var moduleDeprecation *configs.RegistryModuleDeprecation
+func collectModuleDeprecationWarnings(moduleVersion *response.ModuleVersion, subject *hcl.Range, sourceName string) *configs.ModuleDeprecationInfo {
+	var registryModDeprecation *configs.RegistryModuleDeprecation
+
 	if moduleVersion.Deprecation.Deprecated {
-		moduleDeprecation = &configs.RegistryModuleDeprecation{
-			Subject:              subject.String() + moduleVersion.Version,
-			ExternalLink:         moduleVersion.Deprecation.ExternalLink,
-			ExternalDependencies: []*configs.RegistryModuleDeprecation{},
+		registryModDeprecation = &configs.RegistryModuleDeprecation{
+			Subject:      subject,
+			ExternalLink: moduleVersion.Deprecation.ExternalLink,
+			Message:      moduleVersion.Deprecation.Message,
 		}
 	}
-	return moduleDeprecation
+	return &configs.ModuleDeprecationInfo{
+		SourceName:           sourceName,
+		RegistryDeprecation:  registryModDeprecation,
+		ExternalDependencies: []*configs.ModuleDeprecationInfo{},
+	}
 }
 
 func splitAddrSubdir(addr addrs.ModuleSource) (string, string) {

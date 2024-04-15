@@ -5,7 +5,6 @@ package configs
 
 import (
 	"fmt"
-	"log"
 	"path"
 	"sort"
 	"strings"
@@ -25,9 +24,9 @@ import (
 // file-level invariants validated. If the returned diagnostics contains errors,
 // the returned module tree may be incomplete but can still be used carefully
 // for static analysis.
-func BuildConfig(root *Module, walker ModuleWalker, loader MockDataLoader) (*Config, hcl.Diagnostics, []*RegistryModuleDeprecation) {
+func BuildConfig(root *Module, walker ModuleWalker, loader MockDataLoader) (*Config, hcl.Diagnostics, []*ModuleDeprecationInfo) {
 	var diags hcl.Diagnostics
-	var modDeprecations []*RegistryModuleDeprecation
+	var modDeprecations []*ModuleDeprecationInfo
 	cfg := &Config{
 		Module: root,
 	}
@@ -145,9 +144,9 @@ func buildTestModules(root *Config, walker ModuleWalker) hcl.Diagnostics {
 	return diags
 }
 
-func buildChildModules(parent *Config, walker ModuleWalker) (map[string]*Config, hcl.Diagnostics, []*RegistryModuleDeprecation) {
+func buildChildModules(parent *Config, walker ModuleWalker) (map[string]*Config, hcl.Diagnostics, []*ModuleDeprecationInfo) {
 	var diags hcl.Diagnostics
-	var modDeprecations []*RegistryModuleDeprecation
+	modDeprecations := []*ModuleDeprecationInfo{}
 	ret := map[string]*Config{}
 
 	calls := parent.Module.ModuleCalls
@@ -190,10 +189,10 @@ func buildChildModules(parent *Config, walker ModuleWalker) (map[string]*Config,
 	return ret, diags, modDeprecations
 }
 
-func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config, hcl.Diagnostics, *RegistryModuleDeprecation) {
+func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config, hcl.Diagnostics, *ModuleDeprecationInfo) {
 	var diags hcl.Diagnostics
-	var modDeprecation *RegistryModuleDeprecation
-	var childModDeprecations []*RegistryModuleDeprecation
+	var modDeprecation *ModuleDeprecationInfo
+	var childModDeprecations []*ModuleDeprecationInfo
 
 	mod, ver, modDiags, modDeprecation := walker.LoadModule(req)
 	diags = append(diags, modDiags...)
@@ -201,7 +200,6 @@ func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config,
 		// nil can be returned if the source address was invalid and so
 		// nothing could be loaded whatsoever. LoadModule should've
 		// returned at least one error diagnostic in that case.
-		log.Print("does it hit here")
 		return nil, diags, nil
 	}
 
@@ -218,6 +216,15 @@ func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config,
 
 	cfg.Children, modDiags, childModDeprecations = buildChildModules(cfg, walker)
 	diags = append(diags, modDiags...)
+	// mdTODO: Should we return something from the non registry module install methods? Might be more sensable there rather than here.
+	// if the module is not a registry module we won't have a parent ModuleDeprecationInfo to attach any registry modules it has as external dependencies
+	if _, isRegistryModule := req.SourceAddr.(addrs.ModuleSourceRegistry); !isRegistryModule {
+		modDeprecation = &ModuleDeprecationInfo{
+			SourceName:           req.Name,
+			RegistryDeprecation:  nil,
+			ExternalDependencies: []*ModuleDeprecationInfo{},
+		}
+	}
 	if modDeprecation != nil && childModDeprecations != nil {
 		modDeprecation.ExternalDependencies = childModDeprecations
 	}
@@ -263,11 +270,16 @@ func rebaseChildModule(cfg *Config, root *Config) {
 	cfg.Root = root
 }
 
-type RegistryModuleDeprecation struct {
-	Subject              string
-	ExternalLink         string
+type ModuleDeprecationInfo struct {
 	SourceName           string
-	ExternalDependencies []*RegistryModuleDeprecation
+	RegistryDeprecation  *RegistryModuleDeprecation
+	ExternalDependencies []*ModuleDeprecationInfo
+}
+
+type RegistryModuleDeprecation struct {
+	Subject      *hcl.Range
+	Message      string
+	ExternalLink string
 }
 
 // A ModuleWalker knows how to find and load a child module given details about
@@ -285,15 +297,15 @@ type ModuleWalker interface {
 	// ensure that the basic file- and module-validations performed by the
 	// LoadConfigDir function (valid syntax, no namespace collisions, etc) have
 	// been performed before returning a module.
-	LoadModule(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *RegistryModuleDeprecation)
+	LoadModule(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo)
 }
 
 // ModuleWalkerFunc is an implementation of ModuleWalker that directly wraps
 // a callback function, for more convenient use of that interface.
-type ModuleWalkerFunc func(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *RegistryModuleDeprecation)
+type ModuleWalkerFunc func(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo)
 
 // LoadModule implements ModuleWalker.
-func (f ModuleWalkerFunc) LoadModule(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *RegistryModuleDeprecation) {
+func (f ModuleWalkerFunc) LoadModule(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo) {
 	return f(req)
 }
 
@@ -353,7 +365,7 @@ type ModuleRequest struct {
 var DisabledModuleWalker ModuleWalker
 
 func init() {
-	DisabledModuleWalker = ModuleWalkerFunc(func(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *RegistryModuleDeprecation) {
+	DisabledModuleWalker = ModuleWalkerFunc(func(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo) {
 		return nil, nil, hcl.Diagnostics{
 			{
 				Severity: hcl.DiagError,
