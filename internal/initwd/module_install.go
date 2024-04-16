@@ -277,6 +277,8 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 
 					var modDeprecation *configs.ModuleDeprecationInfo
 
+					var moduleVersion *response.ModuleVersion
+
 					// Checking for module deprecations in the case no new module versions need installation
 					if addr, isRegistryModule := req.SourceAddr.(addrs.ModuleSourceRegistry); isRegistryModule {
 						regClient := i.reg
@@ -292,13 +294,23 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 
 						} else {
 							log.Print("mdTODO: figure out the path forward here, either loop through and get a request for a single verison going")
-							/**
-							modDeprecations := collectModuleDeprecationWarnings(resp.Modules, record.Version, req.CallRange.Ptr())
-							diags = diags.Extend(modDeprecations)
-							*/
+							found := false
+							for _, modProviderVersions := range resp.Modules {
+								for _, modVersions := range modProviderVersions.Versions {
+									vm, _ := version.NewVersion(modVersions.Version)
+									if vm.Equal(record.Version) {
+										moduleVersion = modVersions
+										found = true
+										break
+									}
+								}
+								if found {
+									break
+								}
+							}
 						}
 					}
-
+					modDeprecation = collectModuleDeprecationWarnings(moduleVersion, req.CallRange.Ptr(), req.Name)
 					return mod, record.Version, diags, modDeprecation
 				}
 			}
@@ -977,7 +989,8 @@ func maybeImproveLocalInstallError(req *configs.ModuleRequest, diags hcl.Diagnos
 func collectModuleDeprecationWarnings(moduleVersion *response.ModuleVersion, subject *hcl.Range, sourceName string) *configs.ModuleDeprecationInfo {
 	var registryModDeprecation *configs.RegistryModuleDeprecation
 
-	if moduleVersion.Deprecation.Deprecated {
+	// mdTODO: don't like this nil check, maybe a better way to do it?
+	if moduleVersion != nil && moduleVersion.Deprecation.Deprecated {
 		registryModDeprecation = &configs.RegistryModuleDeprecation{
 			Subject:      subject,
 			ExternalLink: moduleVersion.Deprecation.ExternalLink,
