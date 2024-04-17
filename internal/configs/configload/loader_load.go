@@ -4,6 +4,7 @@
 package configload
 
 import (
+	"context"
 	"fmt"
 
 	version "github.com/hashicorp/go-version"
@@ -23,16 +24,21 @@ import (
 // LoadConfig performs the basic syntax and uniqueness validations that are
 // required to process the individual modules
 func (l *Loader) LoadConfig(rootDir string) (*configs.Config, hcl.Diagnostics) {
-	return l.loadConfig(l.parser.LoadConfigDir(rootDir))
+	mod, diags := l.parser.LoadConfigDir(rootDir)
+	return l.loadConfig(mod, diags)
 }
 
 // LoadConfigWithTests matches LoadConfig, except the configs.Config contains
 // any relevant .tftest.hcl files.
 func (l *Loader) LoadConfigWithTests(rootDir string, testDir string) (*configs.Config, hcl.Diagnostics) {
-	return l.loadConfig(l.parser.LoadConfigDirWithTests(rootDir, testDir))
+	mod, diags := l.parser.LoadConfigDirWithTests(rootDir, testDir)
+	return l.loadConfig(mod, diags)
 }
 
 func (l *Loader) loadConfig(rootMod *configs.Module, diags hcl.Diagnostics) (*configs.Config, hcl.Diagnostics) {
+	ctx := context.Background()
+	ctx, span := tracer.Start(ctx, "load config")
+	defer span.End()
 	if rootMod == nil || diags.HasErrors() {
 		// Ensure we return any parsed modules here so that required_version
 		// constraints can be verified even when encountering errors.
@@ -43,7 +49,7 @@ func (l *Loader) loadConfig(rootMod *configs.Module, diags hcl.Diagnostics) (*co
 		return cfg, diags
 	}
 
-	cfg, cDiags, _ := configs.BuildConfig(rootMod, configs.ModuleWalkerFunc(l.moduleWalkerLoad), configs.MockDataLoaderFunc(l.LoadExternalMockData))
+	cfg, cDiags, _ := configs.BuildConfig(ctx, rootMod, configs.ModuleWalkerFunc(l.moduleWalkerLoad), configs.MockDataLoaderFunc(l.LoadExternalMockData))
 	diags = append(diags, cDiags...)
 
 	return cfg, diags
@@ -63,7 +69,7 @@ func (l *Loader) LoadExternalMockData(provider *configs.Provider) (*configs.Mock
 
 // moduleWalkerLoad is a configs.ModuleWalkerFunc for loading modules that
 // are presumed to have already been installed.
-func (l *Loader) moduleWalkerLoad(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
+func (l *Loader) moduleWalkerLoad(ctx context.Context, req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
 	// Since we're just loading here, we expect that all referenced modules
 	// will be already installed and described in our manifest. However, we
 	// do verify that the manifest and the configuration are in agreement

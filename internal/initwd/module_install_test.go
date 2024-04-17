@@ -6,6 +6,7 @@ package initwd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -429,6 +430,31 @@ func TestModuleInstaller_symlink(t *testing.T) {
 		gotTraces[path] = varDesc
 	})
 	assertResultDeepEqual(t, gotTraces, wantTraces)
+}
+
+func TestInstallModulesFromRegistryWithDeprecations(t *testing.T) {
+	fixtureDir := filepath.Clean("testdata/temp-registry-modules-deprecations")
+	tmpDir, done := tempChdir(t, fixtureDir)
+	// the module installer runs filepath.EvalSymlinks() on the destination
+	// directory before copying files, and the resultant directory is what is
+	// returned by the install hooks. Without this, tests could fail on machines
+	// where the default temp dir was a symlink.
+	dir, err := filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer done()
+
+	hooks := &testInstallHooks{}
+	modulesDir := filepath.Join(dir, ".terraform/modules")
+
+	loader, close := configload.NewLoaderForTests(t)
+	defer close()
+	inst := NewModuleInstaller(modulesDir, loader, registry.NewClient(nil, nil))
+	_, _, deprecations := inst.InstallModules(context.Background(), dir, "tests", false, false, hooks)
+	jsonBytes, _ := json.MarshalIndent(deprecations, "", "  ")
+	t.Logf("Diags in test: %s", jsonBytes)
 }
 
 func TestLoaderInstallModules_registry(t *testing.T) {

@@ -4,6 +4,7 @@
 package configload
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,9 @@ import (
 // creates an in-memory snapshot of the configuration files used, which can
 // be later used to create a loader that may read only from this snapshot.
 func (l *Loader) LoadConfigWithSnapshot(rootDir string) (*configs.Config, *Snapshot, hcl.Diagnostics) {
+	ctx := context.Background()
+	ctx, span := tracer.Start(ctx, "load config with snapshot")
+	defer span.End()
 	rootMod, diags := l.parser.LoadConfigDir(rootDir)
 	if rootMod == nil {
 		return nil, nil, diags
@@ -32,7 +36,7 @@ func (l *Loader) LoadConfigWithSnapshot(rootDir string) (*configs.Config, *Snaps
 		Modules: map[string]*SnapshotModule{},
 	}
 	walker := l.makeModuleWalkerSnapshot(snap)
-	cfg, cDiags, _ := configs.BuildConfig(rootMod, walker, configs.MockDataLoaderFunc(l.LoadExternalMockData))
+	cfg, cDiags, _ := configs.BuildConfig(ctx, rootMod, walker, configs.MockDataLoaderFunc(l.LoadExternalMockData))
 	diags = append(diags, cDiags...)
 
 	addDiags := l.addModuleToSnapshot(snap, "", rootDir, "", nil)
@@ -134,8 +138,8 @@ func (s *Snapshot) moduleManifest() modsdir.Manifest {
 // source files from the referenced modules into the given snapshot.
 func (l *Loader) makeModuleWalkerSnapshot(snap *Snapshot) configs.ModuleWalker {
 	return configs.ModuleWalkerFunc(
-		func(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
-			mod, v, diags, _ := l.moduleWalkerLoad(req)
+		func(ctx context.Context, req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
+			mod, v, diags, _ := l.moduleWalkerLoad(ctx, req)
 			if diags.HasErrors() {
 				return mod, v, diags, nil
 			}

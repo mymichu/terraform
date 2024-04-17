@@ -197,7 +197,6 @@ func (r *Reader) ReadConfigSnapshot() (*configload.Snapshot, error) {
 // a native Go error as with other methods on Reader).
 func (r *Reader) ReadConfig() (*configs.Config, tfdiags.Diagnostics) {
 	var diags tfdiags.Diagnostics
-
 	snap, err := r.ReadConfigSnapshot()
 	if err != nil {
 		diags = diags.Append(tfdiags.Sourceless(

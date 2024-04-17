@@ -157,7 +157,7 @@ func (i *ModuleInstaller) InstallModules(ctx context.Context, rootDir, testsDir 
 	}
 	walker := i.moduleInstallWalker(ctx, manifest, upgrade, hooks, fetcher)
 
-	cfg, instDiags, moduleDeprecations := i.installDescendentModules(rootMod, manifest, walker, installErrsOnly)
+	cfg, instDiags, moduleDeprecations := i.installDescendentModules(ctx, rootMod, manifest, walker, installErrsOnly)
 	diags = append(diags, instDiags...)
 
 	return cfg, diags, moduleDeprecations
@@ -165,7 +165,7 @@ func (i *ModuleInstaller) InstallModules(ctx context.Context, rootDir, testsDir 
 
 func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest modsdir.Manifest, upgrade bool, hooks ModuleInstallHooks, fetcher *getmodules.PackageFetcher) configs.ModuleWalker {
 	return configs.ModuleWalkerFunc(
-		func(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
+		func(ctx context.Context, req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
 			var diags hcl.Diagnostics
 
 			if req.SourceAddr == nil {
@@ -280,6 +280,7 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 					var moduleVersion *response.ModuleVersion
 
 					// Checking for module deprecations in the case no new module versions need installation
+					ctx, span := tracer.Start(ctx, "checking for deprecations in already installed modules")
 					if addr, isRegistryModule := req.SourceAddr.(addrs.ModuleSourceRegistry); isRegistryModule {
 						regClient := i.reg
 
@@ -310,6 +311,7 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 							}
 						}
 					}
+					span.End()
 					modDeprecation = collectModuleDeprecationWarnings(moduleVersion, req.CallRange.Ptr(), req.Name)
 					return mod, record.Version, diags, modDeprecation
 				}
@@ -349,7 +351,9 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 	)
 }
 
-func (i *ModuleInstaller) installDescendentModules(rootMod *configs.Module, manifest modsdir.Manifest, installWalker configs.ModuleWalker, installErrsOnly bool) (*configs.Config, tfdiags.Diagnostics, []*configs.ModuleDeprecationInfo) {
+func (i *ModuleInstaller) installDescendentModules(ctx context.Context, rootMod *configs.Module, manifest modsdir.Manifest, installWalker configs.ModuleWalker, installErrsOnly bool) (*configs.Config, tfdiags.Diagnostics, []*configs.ModuleDeprecationInfo) {
+	ctx, span := tracer.Start(ctx, "install descendent modules")
+	defer span.End()
 	var diags tfdiags.Diagnostics
 
 	// When attempting to initialize the current directory with a module
@@ -363,14 +367,14 @@ func (i *ModuleInstaller) installDescendentModules(rootMod *configs.Module, mani
 	walker := installWalker
 	if installErrsOnly {
 		// mdTODO: don't think mod deprecations are relevant here, see about return value here and any implications it has
-		walker = configs.ModuleWalkerFunc(func(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
-			mod, version, diags, _ := installWalker.LoadModule(req)
+		walker = configs.ModuleWalkerFunc(func(ctx context.Context, req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
+			mod, version, diags, _ := installWalker.LoadModule(ctx, req)
 			instDiags = instDiags.Extend(diags)
 			return mod, version, diags, nil
 		})
 	}
 
-	cfg, cDiags, moduleDeprecations := configs.BuildConfig(rootMod, walker, configs.MockDataLoaderFunc(i.loader.LoadExternalMockData))
+	cfg, cDiags, moduleDeprecations := configs.BuildConfig(ctx, rootMod, walker, configs.MockDataLoaderFunc(i.loader.LoadExternalMockData))
 	diags = diags.Append(cDiags)
 	if installErrsOnly {
 		// We can't continue if there was an error during installation, but

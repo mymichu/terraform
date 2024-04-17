@@ -109,7 +109,7 @@ func (c *ComponentConfig) CheckModuleTree(ctx context.Context) (*configs.Config,
 			}
 
 			walker := newSourceBundleModuleWalker(rootModuleSource, sources, parser)
-			configRoot, hclDiags, _ := configs.BuildConfig(rootMod, walker, nil)
+			configRoot, hclDiags, _ := configs.BuildConfig(ctx, rootMod, walker, nil)
 			diags = diags.Append(hclDiags)
 			if hclDiags.HasErrors() {
 				return nil, diags
@@ -544,7 +544,7 @@ func newSourceBundleModuleWalker(rootModuleSource sourceaddrs.FinalSource, sourc
 }
 
 // LoadModule implements configs.ModuleWalker.
-func (w *sourceBundleModuleWalker) LoadModule(req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
+func (w *sourceBundleModuleWalker) LoadModule(ctx context.Context, req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
 	var diags hcl.Diagnostics
 
 	// First we need to assemble the "final source address" for the module

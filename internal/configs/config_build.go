@@ -4,6 +4,7 @@
 package configs
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"sort"
@@ -24,15 +25,17 @@ import (
 // file-level invariants validated. If the returned diagnostics contains errors,
 // the returned module tree may be incomplete but can still be used carefully
 // for static analysis.
-func BuildConfig(root *Module, walker ModuleWalker, loader MockDataLoader) (*Config, hcl.Diagnostics, []*ModuleDeprecationInfo) {
+func BuildConfig(ctx context.Context, root *Module, walker ModuleWalker, loader MockDataLoader) (*Config, hcl.Diagnostics, []*ModuleDeprecationInfo) {
+	ctx, span := tracer.Start(ctx, "build config")
+	defer span.End()
 	var diags hcl.Diagnostics
 	var modDeprecations []*ModuleDeprecationInfo
 	cfg := &Config{
 		Module: root,
 	}
 	cfg.Root = cfg // Root module is self-referential.
-	cfg.Children, diags, modDeprecations = buildChildModules(cfg, walker)
-	diags = append(diags, buildTestModules(cfg, walker)...)
+	cfg.Children, diags, modDeprecations = buildChildModules(ctx, cfg, walker)
+	diags = append(diags, buildTestModules(ctx, cfg, walker)...)
 
 	// Skip provider resolution if there are any errors, since the provider
 	// configurations themselves may not be valid.
@@ -76,7 +79,7 @@ func installMockDataFiles(root *Config, loader MockDataLoader) hcl.Diagnostics {
 	return diags
 }
 
-func buildTestModules(root *Config, walker ModuleWalker) hcl.Diagnostics {
+func buildTestModules(ctx context.Context, root *Config, walker ModuleWalker) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	for name, file := range root.Module.Tests {
@@ -113,7 +116,7 @@ func buildTestModules(root *Config, walker ModuleWalker) hcl.Diagnostics {
 			}
 
 			// mdTODO: don't think mod deprecations are relevant here, check!
-			cfg, modDiags, _ := loadModule(root, &req, walker)
+			cfg, modDiags, _ := loadModule(ctx, root, &req, walker)
 			diags = append(diags, modDiags...)
 
 			if cfg != nil {
@@ -144,7 +147,9 @@ func buildTestModules(root *Config, walker ModuleWalker) hcl.Diagnostics {
 	return diags
 }
 
-func buildChildModules(parent *Config, walker ModuleWalker) (map[string]*Config, hcl.Diagnostics, []*ModuleDeprecationInfo) {
+func buildChildModules(ctx context.Context, parent *Config, walker ModuleWalker) (map[string]*Config, hcl.Diagnostics, []*ModuleDeprecationInfo) {
+	ctx, span := tracer.Start(ctx, "build child modules")
+	defer span.End()
 	var diags hcl.Diagnostics
 	modDeprecations := []*ModuleDeprecationInfo{}
 	ret := map[string]*Config{}
@@ -174,7 +179,7 @@ func buildChildModules(parent *Config, walker ModuleWalker) (map[string]*Config,
 			Parent:            parent,
 			CallRange:         call.DeclRange,
 		}
-		child, modDiags, modDeprecation := loadModule(parent.Root, &req, walker)
+		child, modDiags, modDeprecation := loadModule(ctx, parent.Root, &req, walker)
 		diags = append(diags, modDiags...)
 		modDeprecations = append(modDeprecations, modDeprecation)
 		if child == nil {
@@ -189,12 +194,12 @@ func buildChildModules(parent *Config, walker ModuleWalker) (map[string]*Config,
 	return ret, diags, modDeprecations
 }
 
-func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config, hcl.Diagnostics, *ModuleDeprecationInfo) {
+func loadModule(ctx context.Context, root *Config, req *ModuleRequest, walker ModuleWalker) (*Config, hcl.Diagnostics, *ModuleDeprecationInfo) {
 	var diags hcl.Diagnostics
 	var modDeprecation *ModuleDeprecationInfo
 	var childModDeprecations []*ModuleDeprecationInfo
 
-	mod, ver, modDiags, modDeprecation := walker.LoadModule(req)
+	mod, ver, modDiags, modDeprecation := walker.LoadModule(ctx, req)
 	diags = append(diags, modDiags...)
 	if mod == nil {
 		// nil can be returned if the source address was invalid and so
@@ -214,7 +219,7 @@ func loadModule(root *Config, req *ModuleRequest, walker ModuleWalker) (*Config,
 		Version:         ver,
 	}
 
-	cfg.Children, modDiags, childModDeprecations = buildChildModules(cfg, walker)
+	cfg.Children, modDiags, childModDeprecations = buildChildModules(ctx, cfg, walker)
 	diags = append(diags, modDiags...)
 	// mdTODO: Should we return something from the non registry module install methods? Might be more sensable there rather than here.
 	// if the module is not a registry module we won't have a parent ModuleDeprecationInfo to attach any registry modules it has as external dependencies
@@ -297,16 +302,16 @@ type ModuleWalker interface {
 	// ensure that the basic file- and module-validations performed by the
 	// LoadConfigDir function (valid syntax, no namespace collisions, etc) have
 	// been performed before returning a module.
-	LoadModule(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo)
+	LoadModule(ctx context.Context, req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo)
 }
 
 // ModuleWalkerFunc is an implementation of ModuleWalker that directly wraps
 // a callback function, for more convenient use of that interface.
-type ModuleWalkerFunc func(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo)
+type ModuleWalkerFunc func(ctx context.Context, req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo)
 
 // LoadModule implements ModuleWalker.
-func (f ModuleWalkerFunc) LoadModule(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo) {
-	return f(req)
+func (f ModuleWalkerFunc) LoadModule(ctx context.Context, req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo) {
+	return f(ctx, req)
 }
 
 // ModuleRequest is used with the ModuleWalker interface to describe a child
@@ -365,7 +370,7 @@ type ModuleRequest struct {
 var DisabledModuleWalker ModuleWalker
 
 func init() {
-	DisabledModuleWalker = ModuleWalkerFunc(func(req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo) {
+	DisabledModuleWalker = ModuleWalkerFunc(func(ctx context.Context, req *ModuleRequest) (*Module, *version.Version, hcl.Diagnostics, *ModuleDeprecationInfo) {
 		return nil, nil, hcl.Diagnostics{
 			{
 				Severity: hcl.DiagError,
