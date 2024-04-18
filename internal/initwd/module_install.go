@@ -155,7 +155,7 @@ func (i *ModuleInstaller) InstallModules(ctx context.Context, rootDir, testsDir 
 		Key: "",
 		Dir: rootDir,
 	}
-	walker := i.moduleInstallWalker(ctx, manifest, upgrade, hooks, fetcher)
+	walker := i.moduleInstallWalker(manifest, upgrade, hooks, fetcher)
 
 	cfg, instDiags, moduleDeprecations := i.installDescendentModules(ctx, rootMod, manifest, walker, installErrsOnly)
 	diags = append(diags, instDiags...)
@@ -163,7 +163,7 @@ func (i *ModuleInstaller) InstallModules(ctx context.Context, rootDir, testsDir 
 	return cfg, diags, moduleDeprecations
 }
 
-func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest modsdir.Manifest, upgrade bool, hooks ModuleInstallHooks, fetcher *getmodules.PackageFetcher) configs.ModuleWalker {
+func (i *ModuleInstaller) moduleInstallWalker(manifest modsdir.Manifest, upgrade bool, hooks ModuleInstallHooks, fetcher *getmodules.PackageFetcher) configs.ModuleWalker {
 	return configs.ModuleWalkerFunc(
 		func(ctx context.Context, req *configs.ModuleRequest) (*configs.Module, *version.Version, hcl.Diagnostics, *configs.ModuleDeprecationInfo) {
 			var diags hcl.Diagnostics
@@ -294,7 +294,7 @@ func (i *ModuleInstaller) moduleInstallWalker(ctx context.Context, manifest mods
 							log.Printf("[DEBUG] Deprecation for %s could not be checked: call to registry failed", addr.Package.Namespace)
 
 						} else {
-							log.Print("mdTODO: figure out the path forward here, either loop through and get a request for a single verison going")
+							// mdTODO: we need to figure out path forward here, use exisiting endpoint or get new one for a single module version.
 							found := false
 							for _, modProviderVersions := range resp.Modules {
 								for _, modVersions := range modProviderVersions.Versions {
@@ -993,7 +993,7 @@ func maybeImproveLocalInstallError(req *configs.ModuleRequest, diags hcl.Diagnos
 func collectModuleDeprecationWarnings(moduleVersion *response.ModuleVersion, subject *hcl.Range, sourceName string) *configs.ModuleDeprecationInfo {
 	var registryModDeprecation *configs.RegistryModuleDeprecation
 
-	// mdTODO: don't like this nil check, maybe a better way to do it?
+	// mdTODO: don't like this nil check, maybe handle a nil moduleVersion before this function call instead?
 	if moduleVersion != nil && moduleVersion.Deprecation.Deprecated {
 		registryModDeprecation = &configs.RegistryModuleDeprecation{
 			Subject:      subject,

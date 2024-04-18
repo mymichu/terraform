@@ -235,7 +235,7 @@ func (c *InitCommand) Run(args []string) int {
 	}
 
 	if flagGet {
-		// mdTODO: need to return module deprecations here and then build the final consolidated warning
+		// mdTODO: need to return module deprecations here– maybe just build the final warning in getModules and return as a part of modsDiags
 		modsOutput, modsAbort, modsDiags := c.getModules(ctx, path, testsDirectory, rootModEarly, flagUpgrade)
 		diags = diags.Append(modsDiags)
 		if modsAbort || modsDiags.HasErrors() {
@@ -346,6 +346,7 @@ func (c *InitCommand) Run(args []string) int {
 	return 0
 }
 
+// mdTODO: need to return the deprecations here and later tie them into the rest of the deprecations in init.
 func (c *InitCommand) getModules(ctx context.Context, path, testsDir string, earlyRoot *configs.Module, upgrade bool) (output bool, abort bool, diags tfdiags.Diagnostics) {
 	testModules := false // We can also have modules buried in test files.
 	for _, file := range earlyRoot.Tests {
@@ -377,6 +378,7 @@ func (c *InitCommand) getModules(ctx context.Context, path, testsDir string, ear
 		ShowLocalPaths: true,
 	}
 
+	// mdTODO: need to build the actual warning from the deprecations returned here, ¡designs pending!
 	installAbort, installDiags, moduleDeprecations := c.installModules(ctx, path, testsDir, upgrade, false, hooks)
 	jsonBytes, _ := json.MarshalIndent(moduleDeprecations, "", "  ")
 	log.Printf("[INFO] module deprecation: %s", string(jsonBytes))

@@ -139,6 +139,6 @@ func (l *Loader) moduleWalkerLoad(ctx context.Context, req *configs.ModuleReques
 			},
 		}, nil
 	}
-
+	// mdTODO: look into whether always return nil here for mod deprecations would cause any trouble
 	return mod, record.Version, diags, nil
 }

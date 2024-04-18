@@ -166,7 +166,7 @@ func DirFromModule(ctx context.Context, loader *configload.Loader, rootDir, modu
 	}
 	fetcher := getmodules.NewPackageFetcher()
 
-	walker := inst.moduleInstallWalker(ctx, instManifest, true, wrapHooks, fetcher)
+	walker := inst.moduleInstallWalker(instManifest, true, wrapHooks, fetcher)
 	_, cDiags, _ := inst.installDescendentModules(ctx, fakeRootModule, instManifest, walker, true)
 	if cDiags.HasErrors() {
 		return diags.Append(cDiags)

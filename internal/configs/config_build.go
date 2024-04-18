@@ -230,6 +230,7 @@ func loadModule(ctx context.Context, root *Config, req *ModuleRequest, walker Mo
 			ExternalDependencies: []*ModuleDeprecationInfo{},
 		}
 	}
+	// mdTODO: better error handling here, think of some more ways this can break
 	if modDeprecation != nil && childModDeprecations != nil {
 		modDeprecation.ExternalDependencies = childModDeprecations
 	}
