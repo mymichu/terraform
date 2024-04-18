@@ -221,15 +221,6 @@ func loadModule(ctx context.Context, root *Config, req *ModuleRequest, walker Mo
 
 	cfg.Children, modDiags, childModDeprecations = buildChildModules(ctx, cfg, walker)
 	diags = append(diags, modDiags...)
-	// mdTODO: Should we return something from the non registry module install methods? Might be more sensable there rather than here.
-	// if the module is not a registry module we won't have a parent ModuleDeprecationInfo to attach any registry modules it has as external dependencies
-	if _, isRegistryModule := req.SourceAddr.(addrs.ModuleSourceRegistry); !isRegistryModule {
-		modDeprecation = &ModuleDeprecationInfo{
-			SourceName:           req.Name,
-			RegistryDeprecation:  nil,
-			ExternalDependencies: []*ModuleDeprecationInfo{},
-		}
-	}
 	// mdTODO: better error handling here, think of some more ways this can break
 	if modDeprecation != nil && childModDeprecations != nil {
 		modDeprecation.ExternalDependencies = childModDeprecations

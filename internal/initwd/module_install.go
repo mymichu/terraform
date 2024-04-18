@@ -328,7 +328,11 @@ func (i *ModuleInstaller) moduleInstallWalker(manifest modsdir.Manifest, upgrade
 				mod, mDiags := i.installLocalModule(req, key, manifest, hooks)
 				mDiags = maybeImproveLocalInstallError(req, mDiags)
 				diags = append(diags, mDiags...)
-				return mod, nil, diags, nil
+				return mod, nil, diags, &configs.ModuleDeprecationInfo{
+					SourceName:           req.Name,
+					RegistryDeprecation:  nil,
+					ExternalDependencies: []*configs.ModuleDeprecationInfo{},
+				}
 
 			case addrs.ModuleSourceRegistry:
 				log.Printf("[TRACE] ModuleInstaller: %s is a registry module at %s", key, addr.String())
@@ -340,7 +344,11 @@ func (i *ModuleInstaller) moduleInstallWalker(manifest modsdir.Manifest, upgrade
 				log.Printf("[TRACE] ModuleInstaller: %s address %q will be handled by go-getter", key, addr.String())
 				mod, mDiags := i.installGoGetterModule(ctx, req, key, instPath, manifest, hooks, fetcher)
 				diags = append(diags, mDiags...)
-				return mod, nil, diags, nil
+				return mod, nil, diags, &configs.ModuleDeprecationInfo{
+					SourceName:           req.Name,
+					RegistryDeprecation:  nil,
+					ExternalDependencies: []*configs.ModuleDeprecationInfo{},
+				}
 
 			default:
 				// Shouldn't get here, because there are no other implementations
