@@ -1816,7 +1816,59 @@ func TestPlanWithDeferredComponentForEachDueToParentComponentOutput(t *testing.T
 	}
 }
 
-// TODO: Test that we throw diagnostics if the output used in component for each has a non-set type
+func TestPlanWithDeferredComponentForEachOfInvalidType(t *testing.T) {
+	ctx := context.Background()
+	cfg := loadMainBundleConfigForTest(t, "deferred-component-for-each-from-component-of-invalid-type")
+
+	fakePlanTimestamp, err := time.Parse(time.RFC3339, "1991-08-25T20:57:08Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changesCh := make(chan stackplan.PlannedChange, 8)
+	diagsCh := make(chan tfdiags.Diagnostic, 2)
+	req := PlanRequest{
+		Config: cfg,
+		ProviderFactories: map[addrs.Provider]providers.Factory{
+			addrs.NewDefaultProvider("testing"): func() (providers.Interface, error) {
+				return stacks_testing_provider.NewProvider(), nil
+			},
+		},
+
+		ForcePlanTimestamp: &fakePlanTimestamp,
+
+		InputValues: map[stackaddrs.InputVariable]ExternalInputValue{
+			{Name: "components"}: {
+				Value:    cty.UnknownVal(cty.Set(cty.String)),
+				DefRange: tfdiags.SourceRange{},
+			},
+		},
+	}
+	resp := PlanResponse{
+		PlannedChanges: changesCh,
+		Diagnostics:    diagsCh,
+	}
+	go Plan(ctx, &req, &resp)
+	_, diags := collectPlanOutput(changesCh, diagsCh)
+
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d", len(diags))
+	}
+
+	if diags[0].Severity() != tfdiags.Error {
+		t.Errorf("expected error diagnostic, got %q", diags[0].Severity())
+	}
+
+	expectedSummary := "Invalid for_each value"
+	if diags[0].Description().Summary != expectedSummary {
+		t.Errorf("expected diagnostic with summary %q, got %q", expectedSummary, diags[0].Description().Summary)
+	}
+
+	expectedDetail := "The for_each expression must produce either a map of any type or a set of strings. The keys of the map or the set elements will serve as unique identifiers for multiple instances of this component."
+	if diags[0].Description().Detail != expectedDetail {
+		t.Errorf("expected diagnostic with detail %q, got %q", expectedDetail, diags[0].Description().Detail)
+	}
+}
 
 // collectPlanOutput consumes the two output channels emitting results from
 // a call to [Plan], and collects all of the data written to them before

@@ -69,7 +69,20 @@ func evaluateForEachExpr(ctx context.Context, expr hcl.Expression, phase EvalPha
 	case ty.IsObjectType() || ty.IsMapType():
 		// okay
 
+	// TODO: Should we just remove this case? It seems like we can do some validation also on unknown values
 	case !result.Value.IsKnown():
+		// We can validate if the type is either a map, object or a set of strings
+		if !(ty.IsMapType() || ty.IsObjectType() || ty.IsSetType()) {
+			diags = diags.Append(&hcl.Diagnostic{
+				Severity:    hcl.DiagError,
+				Summary:     invalidForEachSummary,
+				Detail:      invalidForEachDetail,
+				Subject:     result.Expression.Range().Ptr(),
+				Expression:  result.Expression,
+				EvalContext: result.EvalContext,
+			})
+		}
+
 		// we can't validate further without knowing the value
 		return result, diags
 
